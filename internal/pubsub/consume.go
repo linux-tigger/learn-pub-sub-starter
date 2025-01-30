@@ -1,6 +1,8 @@
 package pubsub
 
 import (
+	"bytes"
+	"encoding/gob"
 	"encoding/json"
 	"fmt"
 
@@ -34,7 +36,7 @@ func SubscribeJSON[T any](
 	if err != nil {
 		return fmt.Errorf("could not declare and bind queue: %v", err)
 	}
-
+	ch.Qos(10, 0, false)
 	msgs, err := ch.Consume(
 		queue.Name, // queue
 		"",         // consumer
@@ -57,6 +59,7 @@ func SubscribeJSON[T any](
 	go func() {
 		defer ch.Close()
 		for msg := range msgs {
+			fmt.Println("Received message", exchange, queueName, key, msg.Body)
 			target, err := unmarshaller(msg.Body)
 			if err != nil {
 				fmt.Printf("could not unmarshal message: %v\n", err)
@@ -74,6 +77,76 @@ func SubscribeJSON[T any](
 	}()
 	return nil
 }
+
+func SubscribeGob[T any](
+	conn *amqp.Connection,
+	exchange,
+	queueName,
+	key string,
+	simpleQueueType SimpleQueueType,
+	handler func(T) Acktype,
+) error {
+	ch, queue, err := DeclareAndBind(conn, exchange, queueName, key, simpleQueueType)
+	if err != nil {
+		return fmt.Errorf("could not declare and bind queue: %v", err)
+	}
+	ch.Qos(10, 0, false)
+	msgs, err := ch.Consume(
+		queue.Name, // queue
+		"",         // consumer
+		false,      // auto-ack
+		false,      // exclusive
+		false,      // no-local
+		false,      // no-wait
+		nil,        // args
+	)
+	if err != nil {
+		return fmt.Errorf("could not consume messages: %v", err)
+	}
+
+	decoder := func(data []byte) (T, error) {
+		var result T
+		buf := bytes.NewReader(data)
+		dec := gob.NewDecoder(buf)
+		err := dec.Decode(&result)
+		return result, err
+	}
+	go func() {
+		defer ch.Close()
+		for msg := range msgs {
+			target, err := decoder(msg.Body)
+			if err != nil {
+				fmt.Printf("could not unmarshal message: %v\n", err)
+				continue
+			}
+			switch handler(target) {
+			case Ack:
+				fmt.Println("Acking message")
+				err := msg.Ack(false)
+				if err != nil {
+					fmt.Printf("could not ack message: %v\n", err)
+				}
+			case NackDiscard:
+				fmt.Println("Nacking message")
+				msg.Nack(false, false)
+			case NackRequeue:
+				fmt.Println("Nacking and requeuing message")
+				msg.Nack(false, true)
+			}
+		}
+	}()
+	return nil
+}
+
+// func subscribe[T any](
+// 	conn *amqp.Connection,
+// 	exchange,
+// 	queueName,
+// 	key string,
+// 	simpleQueueType SimpleQueueType,
+// 	handler func(T) Acktype,
+// 	unmarshaller func([]byte) (T, error),
+// ) error
 
 func DeclareAndBind(
 	conn *amqp.Connection,

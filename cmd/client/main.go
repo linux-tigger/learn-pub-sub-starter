@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"log"
+	"strconv"
+	"time"
 
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/gamelogic"
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/pubsub"
@@ -49,7 +51,7 @@ func main() {
 		routing.WarRecognitionsPrefix,
 		routing.WarRecognitionsPrefix+".*",
 		pubsub.SimpleQueueDurable,
-		handlerWar(gs),
+		handlerWar(gs, publishCh),
 	)
 	if err != nil {
 		log.Fatalf("could not subscribe to war declarations: %v", err)
@@ -101,8 +103,30 @@ func main() {
 		case "help":
 			gamelogic.PrintClientHelp()
 		case "spam":
-			// TODO: publish n malicious logs
-			fmt.Println("Spamming not allowed yet!")
+			fmt.Println("spamming logs...")
+			amount, err := strconv.Atoi(words[1])
+			if err != nil {
+				fmt.Println("error: invalid amount")
+				continue
+			}
+			fmt.Println("spamming logs...")
+			for i := 0; i < amount; i++ {
+				spam_msg := gamelogic.GetMaliciousLog()
+				err = pubsub.PublishGob(
+					publishCh,
+					routing.ExchangePerilTopic,
+					routing.GameLogSlug+"."+gs.GetUsername(),
+					routing.GameLog{
+						CurrentTime: time.Now(),
+						Message:     spam_msg,
+						Username:    gs.GetUsername(),
+					},
+				)
+				if err != nil {
+					fmt.Printf("error: %s\n", err)
+				}
+			}
+			fmt.Println("done spamming logs")
 		case "quit":
 			gamelogic.PrintQuit()
 			return
